@@ -2,9 +2,9 @@
 
 pragma solidity >=0.7.0 <0.9.0;
 
-/** 
+/**
  * @title Ballot
- * @dev Implements voting process along with vote delegation
+ * @dev Implements voting process along with vote delegation, time restrictions, and deployment timestamp logging.
  */
 contract Ballot {
 
@@ -16,30 +16,40 @@ contract Ballot {
     }
 
     struct Proposal {
-        // If you can limit the length to a certain number of bytes, 
-        // always use one of bytes1 to bytes32 because they are much cheaper
-        bytes32 name;   // short name (up to 32 bytes)
+        string name;   // short name
         uint voteCount; // number of accumulated votes
     }
 
     address public chairperson;
-
     mapping(address => Voter) public voters;
-
     Proposal[] public proposals;
+    uint public startTime;
+    uint public endTime;
+    uint public deploymentTime; // 时间戳记录合约部署的时间
 
-    /** 
+    // 定义一个事件，用于记录时间戳
+    event LogDeploymentTime(uint timestamp);
+
+    /**
      * @dev Create a new ballot to choose one of 'proposalNames'.
      * @param proposalNames names of proposals
+     * @param _startTime the start time for voting
+     * @param _endTime the end time for voting
      */
-    constructor(bytes32[] memory proposalNames) {
+    constructor(string[] memory proposalNames, uint _startTime, uint _endTime) {
         chairperson = msg.sender;
         voters[chairperson].weight = 1;
+        require(_startTime >= block.timestamp, "Start time must be in the future.");
+        require(_endTime > _startTime, "End time must be after start time.");
+
+        startTime = _startTime;
+        endTime = _endTime;
+        deploymentTime = block.timestamp; // 记录合约部署的时间戳
+
+        // 触发事件，记录部署时间
+        emit LogDeploymentTime(deploymentTime);
 
         for (uint i = 0; i < proposalNames.length; i++) {
-            // 'Proposal({...})' creates a temporary
-            // Proposal object and 'proposals.push(...)'
-            // appends it to the end of 'proposals'.
             proposals.push(Proposal({
                 name: proposalNames[i],
                 voteCount: 0
@@ -47,10 +57,11 @@ contract Ballot {
         }
     }
 
-    /** 
-     * @dev Give 'voter' the right to vote on this ballot. May only be called by 'chairperson'.
-     * @param voter address of voter
-     */
+    // 可以添加一个函数来获取部署时间
+    function getDeploymentTime() public view returns (uint) {
+        return deploymentTime;
+    }
+
     function giveRightToVote(address voter) public {
         require(
             msg.sender == chairperson,
@@ -64,10 +75,6 @@ contract Ballot {
         voters[voter].weight = 1;
     }
 
-    /**
-     * @dev Delegate your vote to the voter 'to'.
-     * @param to address to which vote is delegated
-     */
     function delegate(address to) public {
         Voter storage sender = voters[msg.sender];
         require(!sender.voted, "You already voted.");
@@ -82,12 +89,9 @@ contract Ballot {
         sender.voted = true;
         sender.delegate = to;
         Voter storage delegate_ = voters[to];
-        if (delegate_.voted) 
-        {
+        if (delegate_.voted) {
             proposals[delegate_.vote].voteCount += sender.weight;
-        } 
-        else 
-        {
+        } else {
             delegate_.weight += sender.weight;
         }
     }
@@ -96,13 +100,14 @@ contract Ballot {
         Voter storage sender = voters[msg.sender];
         require(sender.weight != 0, "Has no right to vote");
         require(!sender.voted, "Already voted.");
+        require(block.timestamp >= startTime && block.timestamp <= endTime, "Voting is closed.");
         sender.voted = true;
         sender.vote = proposal;
         proposals[proposal].voteCount += sender.weight;
     }
 
     function winningname() public view
-            returns (bytes32 winnerName_)
+            returns (string memory winnerName_)
     {
         uint winningVoteCount = 0;
         uint winningProposal_;
