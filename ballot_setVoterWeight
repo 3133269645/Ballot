@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: GPL-3.0
+
+pragma solidity >=0.7.0 <0.9.0;
+
+/**
+ * @title Ballot
+ * @dev Implements voting process along with vote delegation, time restrictions, and deployment timestamp logging.
+ */
+contract Ballot {
+
+    struct Voter {
+        uint weight; // weight is accumulated by delegation
+        bool voted;  // if true, that person already voted
+        address delegate; // person delegated to
+        uint vote;   // index of the voted proposal
+    }
+
+    struct Proposal {
+        string name;   // short name
+        uint voteCount; // number of accumulated votes
+    }
+
+    address public chairperson;
+    mapping(address => Voter) public voters;
+    Proposal[] public proposals;
+    uint public startTime;
+    uint public endTime;
+    uint public weightChangeStartTime;
+    uint public weightChangeEndTime;
+
+    // 定义一个事件，用于记录时间戳
+    event LogDeploymentTime(uint timestamp);
+
+    constructor(string[] memory proposalNames) {
+        chairperson = msg.sender;
+        voters[chairperson].weight = 1;
+        for (uint i = 0; i < proposalNames.length; i++) {
+            proposals.push(Proposal({
+                name: proposalNames[i],
+                voteCount: 0
+            }));
+        }
+    }
+
+    // 可以添加一个函数设置时间
+    function setvoteTime(uint256 _start, uint256 _end) public {
+        require(_end > _start, "starttime too big");
+        require(msg.sender == chairperson, "Only chairperson can set time.");
+        startTime = _start;
+        endTime = _end;
+    }
+
+    // 设置权重修改的时间范围
+    function setWeightChangeTime(uint256 _start, uint256 _end) public {
+        require(_end > _start, "Start time must be before end time.");
+        require(msg.sender == chairperson, "Only chairperson can set weight change time.");
+        weightChangeStartTime = _start;
+        weightChangeEndTime = _end;
+    }
+
+    function giveRightToVote(address voter) public {
+        require(msg.sender == chairperson, "Only chairperson can give right to vote.");
+        require(!voters[voter].voted, "The voter already voted.");
+        require(voters[voter].weight == 0, "Voter already has the right to vote.");
+        voters[voter].weight = 1;
+    }
+
+    // 允许合约所有者为某个选民设置特定的投票权重
+    function setVoterWeight(address voter, uint weight) public {
+        require(msg.sender == chairperson, "Only the chairperson can set voter weights.");
+        require(weight >= 1, "Weight must be at least 1.");
+        require(voters[voter].weight > 0, "Voter must be registered before setting weight.");
+        require(block.timestamp >= weightChangeStartTime && block.timestamp <= weightChangeEndTime, "Weight change is not within the allowed time range.");
+        voters[voter].weight = weight; // 设置选民的权重
+    }
+
+    function delegate(address to) public {
+        Voter storage sender = voters[msg.sender];
+        require(!sender.voted, "You already voted.");
+        require(to != msg.sender, "Self-delegation is disallowed.");
+
+        while (voters[to].delegate != address(0)) {
+            to = voters[to].delegate;
+
+            // We found a loop in the delegation, not allowed.
+            require(to != msg.sender, "Found loop in delegation.");
+        }
+        sender.voted = true;
+        sender.delegate = to;
+        Voter storage delegate_ = voters[to];
+        if (delegate_.voted) {
+            proposals[delegate_.vote].voteCount += sender.weight;
+        } else {
+            delegate_.weight += sender.weight;
+        }
+    }
+
+    function vote(uint proposal) public {
+        Voter storage sender = voters[msg.sender];
+        require(sender.weight != 0, "Has no right to vote");
+        require(!sender.voted, "Already voted.");
+        require(block.timestamp >= startTime && block.timestamp <= endTime, "Voting is closed.");
+        require(block.timestamp >= weightChangeStartTime && block.timestamp <= weightChangeEndTime, "Weight change is not within the allowed time range.");
+        sender.voted = true;
+        sender.vote = proposal;
+        proposals[proposal].voteCount += sender.weight;
+    }
+
+    function winningName() public view
+            returns (string memory winnerName_)
+    {
+        uint winningVoteCount = 0;
+        uint winningProposal_;
+        for (uint p = 0; p < proposals.length; p++) {
+            if (proposals[p].voteCount > winningVoteCount) {
+                winningVoteCount = proposals[p].voteCount;
+                winningProposal_ = p;
+            }
+        }
+        winnerName_ = proposals[winningProposal_].name;
+    }
+}
